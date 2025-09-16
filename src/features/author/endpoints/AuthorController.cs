@@ -4,6 +4,7 @@ using LibraryApi.Infrastructure;
 using LibraryApi.Infrastructure.Pagination;
 using LibraryApi.Features.Author.models;
 using LibraryApi.Features.Author.views;
+using LibraryApi.Features.Book.models;
 
 namespace LibraryApi.Features.Author.endpoints;
 
