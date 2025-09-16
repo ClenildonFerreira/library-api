@@ -2,10 +2,10 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using LibraryApi.Infrastructure;
 using LibraryApi.Infrastructure.Pagination;
-using Microsoft.AspNetCore.Http;
-using System.Net.Mime;
+using LibraryApi.Features.Author.models;
+using LibraryApi.Features.Author.views;
 
-namespace LibraryApi.Features.Author;
+namespace LibraryApi.Features.Author.endpoints;
 
 /// <summary>
 /// Controller para gerenciamento de autores
@@ -31,14 +31,27 @@ public class AuthorController : ControllerBase
     /// <response code="200">Retorna a lista paginada de autores</response>
     [HttpGet]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public async Task<ActionResult<PagedResult<Entities.Author>>> GetAuthors([FromQuery] PaginationParameters parameters)
+    public async Task<ActionResult<AuthorListViewModel>> GetAuthors([FromQuery] PaginationParameters parameters)
     {
-        var query = _context.Authors.AsQueryable();
+        var query = _context.Authors
+            .Include(a => a.Books)
+            .AsQueryable();
 
-        var pagedResult = await Task.FromResult(query.ToPagedResult(parameters.PageNumber, parameters.PageSize));
+        var authors = await Task.FromResult(query.ToPagedResult(parameters.PageNumber, parameters.PageSize));
 
-        return Ok(pagedResult);
+        var authorDtos = authors.Items.Select(a => new AuthorDto
+        {
+            Id = a.Id,
+            Name = a.Name,
+            Biography = a.Biography,
+            BookCount = a.Books.Count
+        }).ToList();
+
+        var pagedResult = new PagedResult<AuthorDto>(authorDtos, authors.TotalCount, authors.PageNumber, authors.PageSize);
+
+        return Ok(new AuthorListViewModel { Authors = pagedResult });
     }
+
     /// <summary>
     /// Obtém um autor específico pelo ID
     /// </summary>
@@ -49,7 +62,7 @@ public class AuthorController : ControllerBase
     [HttpGet("{id}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<Entities.Author>> GetAuthor(int id)
+    public async Task<ActionResult<AuthorDetailViewModel>> GetAuthor(int id)
     {
         var author = await _context.Authors
             .Include(a => a.Books)
@@ -60,32 +73,66 @@ public class AuthorController : ControllerBase
             return NotFound();
         }
 
-        return author;
+        var authorDto = new AuthorDto
+        {
+            Id = author.Id,
+            Name = author.Name,
+            Biography = author.Biography,
+            BookCount = author.Books.Count
+        };
+
+        var bookDtos = author.Books.Select(b => new BookSummaryDto
+        {
+            Id = b.Id,
+            Title = b.Title ?? "",
+            ISBN = b.ISBN ?? "",
+            PublicationYear = b.PublicationYear
+        }).ToList();
+
+        return Ok(new AuthorDetailViewModel
+        {
+            Author = authorDto,
+            Books = bookDtos
+        });
     }
 
     /// <summary>
     /// Cria um novo autor
     /// </summary>
-    /// <param name="author">Dados do autor a ser criado</param>
+    /// <param name="createAuthorDto">Dados do autor a ser criado</param>
     /// <returns>O novo autor criado</returns>
     /// <response code="201">Retorna o novo autor criado</response>
     /// <response code="400">Se os dados do autor forem inválidos</response>
     [HttpPost]
     [ProducesResponseType(StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult<Entities.Author>> CreateAuthor(Entities.Author author)
+    public async Task<ActionResult<AuthorDto>> CreateAuthor(CreateAuthorDto createAuthorDto)
     {
+        var author = new Entities.Author
+        {
+            Name = createAuthorDto.Name ?? "",
+            Biography = createAuthorDto.Biography ?? ""
+        };
+
         _context.Authors.Add(author);
         await _context.SaveChangesAsync();
 
-        return CreatedAtAction(nameof(GetAuthor), new { id = author.Id }, author);
+        var authorDto = new AuthorDto
+        {
+            Id = author.Id,
+            Name = author.Name,
+            Biography = author.Biography,
+            BookCount = 0
+        };
+
+        return CreatedAtAction(nameof(GetAuthor), new { id = author.Id }, authorDto);
     }
 
     /// <summary>
     /// Atualiza um autor existente
     /// </summary>
     /// <param name="id">ID do autor a ser atualizado</param>
-    /// <param name="author">Novos dados do autor</param>
+    /// <param name="updateAuthorDto">Novos dados do autor</param>
     /// <returns>Nenhum conteúdo</returns>
     /// <response code="204">Se o autor foi atualizado com sucesso</response>
     /// <response code="400">Se os dados do autor forem inválidos</response>
@@ -94,12 +141,17 @@ public class AuthorController : ControllerBase
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> UpdateAuthor(int id, Entities.Author author)
+    public async Task<IActionResult> UpdateAuthor(int id, UpdateAuthorDto updateAuthorDto)
     {
-        if (id != author.Id)
+        var author = await _context.Authors.FindAsync(id);
+
+        if (author == null)
         {
-            return BadRequest();
+            return NotFound();
         }
+
+        author.Name = updateAuthorDto.Name ?? "";
+        author.Biography = updateAuthorDto.Biography ?? "";
 
         _context.Entry(author).State = EntityState.Modified;
 
@@ -131,13 +183,22 @@ public class AuthorController : ControllerBase
     /// <response code="404">Se o autor não for encontrado</response>
     [HttpDelete("{id}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> DeleteAuthor(int id)
     {
-        var author = await _context.Authors.FindAsync(id);
+        var author = await _context.Authors
+            .Include(a => a.Books)
+            .FirstOrDefaultAsync(a => a.Id == id);
+
         if (author == null)
         {
             return NotFound();
+        }
+
+        if (author.Books.Any())
+        {
+            return BadRequest("Não é possível excluir o autor porque possui livros pendentes.");
         }
 
         _context.Authors.Remove(author);
