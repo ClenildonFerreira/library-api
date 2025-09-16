@@ -2,10 +2,10 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using LibraryApi.Infrastructure;
 using LibraryApi.Infrastructure.Pagination;
-using Microsoft.AspNetCore.Http;
-using System.Net.Mime;
+using LibraryApi.Features.Book.models;
+using LibraryApi.Features.Book.views;
 
-namespace LibraryApi.Features.Book;
+namespace LibraryApi.Features.Book.endpoints;
 
 /// <summary>
 /// Controller para gerenciamento de livros
@@ -31,16 +31,33 @@ public class BookController : ControllerBase
     /// <response code="200">Retorna a lista paginada de livros</response>
     [HttpGet]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public async Task<ActionResult<PagedResult<Entities.Book>>> GetBooks([FromQuery] PaginationParameters parameters)
+    public async Task<ActionResult<BookListViewModel>> GetBooks([FromQuery] PaginationParameters parameters)
     {
         var query = _context.Books
             .Include(b => b.Author)
             .Include(b => b.Genre)
+            .Include(b => b.Loans)
             .AsQueryable();
 
-        var pagedResult = await Task.FromResult(query.ToPagedResult(parameters.PageNumber, parameters.PageSize));
+        var books = await Task.FromResult(query.ToPagedResult(parameters.PageNumber, parameters.PageSize));
 
-        return Ok(pagedResult);
+        var bookDtos = books.Items.Select(b => new BookDto
+        {
+            Id = b.Id,
+            Title = b.Title,
+            ISBN = b.ISBN,
+            PublicationYear = b.PublicationYear,
+            Quantity = b.Quantity,
+            AuthorId = b.AuthorId,
+            GenreId = b.GenreId,
+            AuthorName = b.Author?.Name,
+            GenreName = b.Genre?.Name,
+            AvailableQuantity = b.Quantity - (b.Loans?.Count(l => l.ReturnDate == null) ?? 0)
+        }).ToList();
+
+        var pagedResult = new PagedResult<BookDto>(bookDtos, books.TotalCount, books.PageNumber, books.PageSize);
+
+        return Ok(new BookListViewModel { Books = pagedResult });
     }
 
     /// <summary>
@@ -53,12 +70,13 @@ public class BookController : ControllerBase
     [HttpGet("{id}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<Entities.Book>> GetBook(int id)
+    public async Task<ActionResult<BookDetailViewModel>> GetBook(int id)
     {
         var book = await _context.Books
             .Include(b => b.Author)
             .Include(b => b.Genre)
-            .Include(b => b.Loans)
+            .Include(b => b.Loans!)
+            .ThenInclude(l => l.Student)
             .FirstOrDefaultAsync(b => b.Id == id);
 
         if (book == null)
@@ -66,44 +84,98 @@ public class BookController : ControllerBase
             return NotFound();
         }
 
-        return book;
+        var bookDto = new BookDto
+        {
+            Id = book.Id,
+            Title = book.Title,
+            ISBN = book.ISBN,
+            PublicationYear = book.PublicationYear,
+            Quantity = book.Quantity,
+            AuthorId = book.AuthorId,
+            GenreId = book.GenreId,
+            AuthorName = book.Author?.Name,
+            GenreName = book.Genre?.Name,
+            AvailableQuantity = book.Quantity - (book.Loans?.Count(l => l.ReturnDate == null) ?? 0)
+        };
+
+        var loanDtos = book.Loans?.Select(l => new LoanSummaryDto
+        {
+            Id = l.Id,
+            LoanDate = l.LoanDate,
+            ReturnDate = l.ReturnDate,
+            DueDate = l.DueDate,
+            StudentName = l.Student?.Name
+        }).ToList() ?? new List<LoanSummaryDto>();
+
+        return Ok(new BookDetailViewModel
+        {
+            Book = bookDto,
+            Loans = loanDtos
+        });
     }
 
     /// <summary>
     /// Cria um novo livro
     /// </summary>
-    /// <param name="book">Dados do livro a ser criado</param>
+    /// <param name="createBookDto">Dados do livro a ser criado</param>
     /// <returns>O novo livro criado</returns>
     /// <response code="201">Retorna o novo livro criado</response>
     /// <response code="400">Se os dados do livro forem inválidos ou se o autor ou gênero não existirem</response>
     [HttpPost]
     [ProducesResponseType(StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult<Entities.Book>> CreateBook(Entities.Book book)
+    public async Task<ActionResult<BookDto>> CreateBook(CreateBookDto createBookDto)
     {
-        var authorExists = await _context.Authors.AnyAsync(a => a.Id == book.AuthorId);
+        var authorExists = await _context.Authors.AnyAsync(a => a.Id == createBookDto.AuthorId);
         if (!authorExists)
         {
             return BadRequest("Autor não encontrado.");
         }
 
-        var genreExists = await _context.Genres.AnyAsync(g => g.Id == book.GenreId);
+        var genreExists = await _context.Genres.AnyAsync(g => g.Id == createBookDto.GenreId);
         if (!genreExists)
         {
             return BadRequest("Gênero não encontrado.");
         }
 
+        var book = new Entities.Book
+        {
+            Title = createBookDto.Title,
+            ISBN = createBookDto.ISBN,
+            PublicationYear = createBookDto.PublicationYear,
+            Quantity = createBookDto.Quantity,
+            AuthorId = createBookDto.AuthorId,
+            GenreId = createBookDto.GenreId
+        };
+
         _context.Books.Add(book);
         await _context.SaveChangesAsync();
 
-        return CreatedAtAction(nameof(GetBook), new { id = book.Id }, book);
+        var author = await _context.Authors.FindAsync(book.AuthorId);
+        var genre = await _context.Genres.FindAsync(book.GenreId);
+
+        var bookDto = new BookDto
+        {
+            Id = book.Id,
+            Title = book.Title,
+            ISBN = book.ISBN,
+            PublicationYear = book.PublicationYear,
+            Quantity = book.Quantity,
+            AuthorId = book.AuthorId,
+            GenreId = book.GenreId,
+            AuthorName = author?.Name,
+            GenreName = genre?.Name,
+            AvailableQuantity = book.Quantity
+        };
+
+        return CreatedAtAction(nameof(GetBook), new { id = book.Id }, bookDto);
     }
 
     /// <summary>
     /// Atualiza um livro existente
     /// </summary>
     /// <param name="id">ID do livro a ser atualizado</param>
-    /// <param name="book">Novos dados do livro</param>
+    /// <param name="updateBookDto">Novos dados do livro</param>
     /// <returns>Nenhum conteúdo</returns>
     /// <response code="204">Se o livro foi atualizado com sucesso</response>
     /// <response code="400">Se os dados do livro forem inválidos ou se o autor ou gênero não existirem</response>
@@ -112,24 +184,33 @@ public class BookController : ControllerBase
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> UpdateBook(int id, Entities.Book book)
+    public async Task<IActionResult> UpdateBook(int id, UpdateBookDto updateBookDto)
     {
-        if (id != book.Id)
+        var book = await _context.Books.FindAsync(id);
+
+        if (book == null)
         {
-            return BadRequest();
+            return NotFound();
         }
 
-        var authorExists = await _context.Authors.AnyAsync(a => a.Id == book.AuthorId);
+        var authorExists = await _context.Authors.AnyAsync(a => a.Id == updateBookDto.AuthorId);
         if (!authorExists)
         {
             return BadRequest("Autor não encontrado.");
         }
 
-        var genreExists = await _context.Genres.AnyAsync(g => g.Id == book.GenreId);
+        var genreExists = await _context.Genres.AnyAsync(g => g.Id == updateBookDto.GenreId);
         if (!genreExists)
         {
             return BadRequest("Gênero não encontrado.");
         }
+
+        book.Title = updateBookDto.Title;
+        book.ISBN = updateBookDto.ISBN;
+        book.PublicationYear = updateBookDto.PublicationYear;
+        book.Quantity = updateBookDto.Quantity;
+        book.AuthorId = updateBookDto.AuthorId;
+        book.GenreId = updateBookDto.GenreId;
 
         _context.Entry(book).State = EntityState.Modified;
 
@@ -166,14 +247,16 @@ public class BookController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> DeleteBook(int id)
     {
-        var book = await _context.Books.FindAsync(id);
+        var book = await _context.Books
+            .Include(b => b.Loans)
+            .FirstOrDefaultAsync(b => b.Id == id);
+
         if (book == null)
         {
             return NotFound();
         }
 
-        var hasLoans = await _context.Loans.AnyAsync(l => l.BookId == id);
-        if (hasLoans)
+        if (book.Loans != null && book.Loans.Any(l => l.ReturnDate == null))
         {
             return BadRequest("Não é possível excluir o livro porque existem empréstimos pendentes.");
         }
@@ -195,7 +278,7 @@ public class BookController : ControllerBase
     /// <response code="200">Retorna a lista paginada de livros encontrados</response>
     [HttpGet("search")]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public async Task<ActionResult<PagedResult<Entities.Book>>> SearchBooks(
+    public async Task<ActionResult<BookListViewModel>> SearchBooks(
         [FromQuery] string? title,
         [FromQuery] string? author,
         [FromQuery] string? genre,
@@ -204,6 +287,7 @@ public class BookController : ControllerBase
         var query = _context.Books
             .Include(b => b.Author)
             .Include(b => b.Genre)
+            .Include(b => b.Loans)
             .AsQueryable();
 
         if (!string.IsNullOrEmpty(title))
@@ -221,9 +305,25 @@ public class BookController : ControllerBase
             query = query.Where(b => b.Genre != null && b.Genre.Name != null && b.Genre.Name.Contains(genre));
         }
 
-        var pagedResult = await Task.FromResult(query.ToPagedResult(parameters.PageNumber, parameters.PageSize));
+        var books = await Task.FromResult(query.ToPagedResult(parameters.PageNumber, parameters.PageSize));
 
-        return Ok(pagedResult);
+        var bookDtos = books.Items.Select(b => new BookDto
+        {
+            Id = b.Id,
+            Title = b.Title,
+            ISBN = b.ISBN,
+            PublicationYear = b.PublicationYear,
+            Quantity = b.Quantity,
+            AuthorId = b.AuthorId,
+            GenreId = b.GenreId,
+            AuthorName = b.Author?.Name,
+            GenreName = b.Genre?.Name,
+            AvailableQuantity = b.Quantity - (b.Loans?.Count(l => l.ReturnDate == null) ?? 0)
+        }).ToList();
+
+        var pagedResult = new PagedResult<BookDto>(bookDtos, books.TotalCount, books.PageNumber, books.PageSize);
+
+        return Ok(new BookListViewModel { Books = pagedResult });
     }
 
     private bool BookExists(int id)

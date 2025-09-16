@@ -4,8 +4,8 @@ namespace LibraryApi.Features.Author.views;
 
 public class AuthorDetailViewModel
 {
-    public AuthorDto Author { get; set; } = new AuthorDto();
-    public List<BookSummaryDto> Books { get; set; } = new List<BookSummaryDto>();
+    public AuthorDto? Author { get; set; }
+    public List<BookSummaryDto>? Books { get; set; }
 }
 
 public class BookSummaryDto
