@@ -1,0 +1,160 @@
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using LibraryApi.Infrastructure;
+
+namespace LibraryApi.Features.Book;
+
+[ApiController]
+[Route("books")]
+public class BookController : ControllerBase
+{
+    private readonly AppDbContext _context;
+
+    public BookController(AppDbContext context)
+    {
+        _context = context;
+    }
+
+    [HttpGet]
+    public async Task<ActionResult<IEnumerable<Entities.Book>>> GetBooks()
+    {
+        return await _context.Books
+            .Include(b => b.Author)
+            .Include(b => b.Genre)
+            .ToListAsync();
+    }
+
+    [HttpGet("{id}")]
+    public async Task<ActionResult<Entities.Book>> GetBook(int id)
+    {
+        var book = await _context.Books
+            .Include(b => b.Author)
+            .Include(b => b.Genre)
+            .Include(b => b.Loans)
+            .FirstOrDefaultAsync(b => b.Id == id);
+
+        if (book == null)
+        {
+            return NotFound();
+        }
+
+        return book;
+    }
+
+    [HttpPost]
+    public async Task<ActionResult<Entities.Book>> CreateBook(Entities.Book book)
+    {
+        var authorExists = await _context.Authors.AnyAsync(a => a.Id == book.AuthorId);
+        if (!authorExists)
+        {
+            return BadRequest("Autor não encontrado.");
+        }
+
+        var genreExists = await _context.Genres.AnyAsync(g => g.Id == book.GenreId);
+        if (!genreExists)
+        {
+            return BadRequest("Gênero não encontrado.");
+        }
+
+        _context.Books.Add(book);
+        await _context.SaveChangesAsync();
+
+        return CreatedAtAction(nameof(GetBook), new { id = book.Id }, book);
+    }
+
+    [HttpPatch("{id}")]
+    public async Task<IActionResult> UpdateBook(int id, Entities.Book book)
+    {
+        if (id != book.Id)
+        {
+            return BadRequest();
+        }
+
+        var authorExists = await _context.Authors.AnyAsync(a => a.Id == book.AuthorId);
+        if (!authorExists)
+        {
+            return BadRequest("Autor não encontrado.");
+        }
+
+        var genreExists = await _context.Genres.AnyAsync(g => g.Id == book.GenreId);
+        if (!genreExists)
+        {
+            return BadRequest("Gênero não encontrado.");
+        }
+
+        _context.Entry(book).State = EntityState.Modified;
+
+        try
+        {
+            await _context.SaveChangesAsync();
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            if (!BookExists(id))
+            {
+                return NotFound();
+            }
+            else
+            {
+                throw;
+            }
+        }
+
+        return NoContent();
+    }
+
+    [HttpDelete("{id}")]
+    public async Task<IActionResult> DeleteBook(int id)
+    {
+        var book = await _context.Books.FindAsync(id);
+        if (book == null)
+        {
+            return NotFound();
+        }
+
+        var hasLoans = await _context.Loans.AnyAsync(l => l.BookId == id);
+        if (hasLoans)
+        {
+            return BadRequest("Não é possível excluir o livro porque existem empréstimos pendentes.");
+        }
+
+        _context.Books.Remove(book);
+        await _context.SaveChangesAsync();
+
+        return NoContent();
+    }
+
+    [HttpGet("search")]
+    public async Task<ActionResult<IEnumerable<Entities.Book>>> SearchBooks(
+        [FromQuery] string? title,
+        [FromQuery] string? author,
+        [FromQuery] string? genre)
+    {
+        var query = _context.Books
+            .Include(b => b.Author)
+            .Include(b => b.Genre)
+            .AsQueryable();
+
+        if (!string.IsNullOrEmpty(title))
+        {
+            query = query.Where(b => b.Title != null && b.Title.Contains(title));
+        }
+
+        if (!string.IsNullOrEmpty(author))
+        {
+            query = query.Where(b => b.Author != null && b.Author.Name != null && b.Author.Name.Contains(author));
+        }
+
+        if (!string.IsNullOrEmpty(genre))
+        {
+            query = query.Where(b => b.Genre != null && b.Genre.Name != null && b.Genre.Name.Contains(genre));
+        }
+
+        return await query.ToListAsync();
+    }
+
+    private bool BookExists(int id)
+    {
+        return _context.Books.Any(e => e.Id == id);
+    }
+}
