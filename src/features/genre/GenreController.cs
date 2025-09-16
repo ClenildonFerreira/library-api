@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using LibraryApi.Infrastructure;
+using LibraryApi.Infrastructure.Pagination;
 
 namespace LibraryApi.Features.Genre;
 
@@ -16,9 +17,13 @@ public class GenreController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<Entities.Genre>>> GetGenres()
+    public async Task<ActionResult<PagedResult<Entities.Genre>>> GetGenres([FromQuery] PaginationParameters parameters)
     {
-        return await _context.Genres.ToListAsync();
+        var query = _context.Genres.AsQueryable();
+
+        var pagedResult = await Task.FromResult(query.ToPagedResult(parameters.PageNumber, parameters.PageSize));
+
+        return Ok(pagedResult);
     }
 
     [HttpGet("{id}")]

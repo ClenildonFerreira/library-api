@@ -1,11 +1,17 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using LibraryApi.Infrastructure;
+using LibraryApi.Infrastructure.Pagination;
 
 namespace LibraryApi.Features.Book;
 
+/// <summary>
+/// Controller para gerenciamento de livros
+/// </summary>
 [ApiController]
 [Route("books")]
+[Produces("application/json")]
+[Tags("Livros")]
 public class BookController : ControllerBase
 {
     private readonly AppDbContext _context;
@@ -15,16 +21,36 @@ public class BookController : ControllerBase
         _context = context;
     }
 
+    /// <summary>
+    /// Obtém uma lista paginada de livros
+    /// </summary>
+    /// <param name="parameters">Parâmetros de paginação</param>
+    /// <returns>Uma lista paginada de livros</returns>
+    /// <response code="200">Retorna a lista paginada de livros</response>
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<Entities.Book>>> GetBooks()
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<ActionResult<PagedResult<Entities.Book>>> GetBooks([FromQuery] PaginationParameters parameters)
     {
-        return await _context.Books
+        var query = _context.Books
             .Include(b => b.Author)
             .Include(b => b.Genre)
-            .ToListAsync();
+            .AsQueryable();
+
+        var pagedResult = await Task.FromResult(query.ToPagedResult(parameters.PageNumber, parameters.PageSize));
+
+        return Ok(pagedResult);
     }
 
+    /// <summary>
+    /// Obtém um livro específico pelo ID
+    /// </summary>
+    /// <param name="id">ID do livro</param>
+    /// <returns>O livro encontrado</returns>
+    /// <response code="200">Retorna o livro encontrado</response>
+    /// <response code="404">Se o livro não for encontrado</response>
     [HttpGet("{id}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<Entities.Book>> GetBook(int id)
     {
         var book = await _context.Books
@@ -125,10 +151,11 @@ public class BookController : ControllerBase
     }
 
     [HttpGet("search")]
-    public async Task<ActionResult<IEnumerable<Entities.Book>>> SearchBooks(
+    public async Task<ActionResult<PagedResult<Entities.Book>>> SearchBooks(
         [FromQuery] string? title,
         [FromQuery] string? author,
-        [FromQuery] string? genre)
+        [FromQuery] string? genre,
+        [FromQuery] PaginationParameters parameters)
     {
         var query = _context.Books
             .Include(b => b.Author)
@@ -150,7 +177,9 @@ public class BookController : ControllerBase
             query = query.Where(b => b.Genre != null && b.Genre.Name != null && b.Genre.Name.Contains(genre));
         }
 
-        return await query.ToListAsync();
+        var pagedResult = await Task.FromResult(query.ToPagedResult(parameters.PageNumber, parameters.PageSize));
+
+        return Ok(pagedResult);
     }
 
     private bool BookExists(int id)

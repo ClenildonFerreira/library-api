@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using LibraryApi.Infrastructure;
+using LibraryApi.Infrastructure.Pagination;
 
 namespace LibraryApi.Features.Loan;
 
@@ -16,12 +17,16 @@ public class LoanController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<Entities.Loan>>> GetLoans()
+    public async Task<ActionResult<PagedResult<Entities.Loan>>> GetLoans([FromQuery] PaginationParameters parameters)
     {
-        return await _context.Loans
+        var query = _context.Loans
             .Include(l => l.Book)
             .Include(l => l.Student)
-            .ToListAsync();
+            .AsQueryable();
+
+        var pagedResult = await Task.FromResult(query.ToPagedResult(parameters.PageNumber, parameters.PageSize));
+
+        return Ok(pagedResult);
     }
 
     [HttpGet("{id}")]
@@ -139,14 +144,18 @@ public class LoanController : ControllerBase
     }
 
     [HttpGet("overdue")]
-    public async Task<ActionResult<IEnumerable<Entities.Loan>>> GetOverdueLoans()
+    public async Task<ActionResult<PagedResult<Entities.Loan>>> GetOverdueLoans([FromQuery] PaginationParameters parameters)
     {
         var today = DateTime.Now;
-        return await _context.Loans
+        var query = _context.Loans
             .Include(l => l.Book)
             .Include(l => l.Student)
             .Where(l => l.ReturnDate == null && l.DueDate < today)
-            .ToListAsync();
+            .AsQueryable();
+
+        var pagedResult = await Task.FromResult(query.ToPagedResult(parameters.PageNumber, parameters.PageSize));
+
+        return Ok(pagedResult);
     }
 
     private bool LoanExists(int id)

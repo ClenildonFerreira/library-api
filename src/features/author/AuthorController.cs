@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using LibraryApi.Infrastructure;
+using LibraryApi.Infrastructure.Pagination;
 
 namespace LibraryApi.Features.Author;
 
@@ -16,9 +17,13 @@ public class AuthorController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<Entities.Author>>> GetAuthors()
+    public async Task<ActionResult<PagedResult<Entities.Author>>> GetAuthors([FromQuery] PaginationParameters parameters)
     {
-        return await _context.Authors.ToListAsync();
+        var query = _context.Authors.AsQueryable();
+
+        var pagedResult = await Task.FromResult(query.ToPagedResult(parameters.PageNumber, parameters.PageSize));
+
+        return Ok(pagedResult);
     }
 
     [HttpGet("{id}")]

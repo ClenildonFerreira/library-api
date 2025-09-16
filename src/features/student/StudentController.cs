@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using LibraryApi.Infrastructure;
+using LibraryApi.Infrastructure.Pagination;
 
 namespace LibraryApi.Features.Student;
 
@@ -16,9 +17,13 @@ public class StudentController : ControllerBase
     }
 
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<Entities.Student>>> GetStudents()
+    public async Task<ActionResult<PagedResult<Entities.Student>>> GetStudents([FromQuery] PaginationParameters parameters)
     {
-        return await _context.Students.ToListAsync();
+        var query = _context.Students.AsQueryable();
+
+        var pagedResult = await Task.FromResult(query.ToPagedResult(parameters.PageNumber, parameters.PageSize));
+
+        return Ok(pagedResult);
     }
 
     [HttpGet("{id}")]
