@@ -2,11 +2,18 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using LibraryApi.Infrastructure;
 using LibraryApi.Infrastructure.Pagination;
+using Microsoft.AspNetCore.Http;
+using System.Net.Mime;
 
 namespace LibraryApi.Features.Author;
 
+/// <summary>
+/// Controller para gerenciamento de autores
+/// </summary>
 [ApiController]
 [Route("authors")]
+[Produces("application/json")]
+[Tags("Autores")]
 public class AuthorController : ControllerBase
 {
     private readonly AppDbContext _context;
@@ -16,7 +23,14 @@ public class AuthorController : ControllerBase
         _context = context;
     }
 
+    /// <summary>
+    /// Obtém uma lista paginada de autores
+    /// </summary>
+    /// <param name="parameters">Parâmetros de paginação</param>
+    /// <returns>Uma lista paginada de autores</returns>
+    /// <response code="200">Retorna a lista paginada de autores</response>
     [HttpGet]
+    [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<ActionResult<PagedResult<Entities.Author>>> GetAuthors([FromQuery] PaginationParameters parameters)
     {
         var query = _context.Authors.AsQueryable();
@@ -25,8 +39,16 @@ public class AuthorController : ControllerBase
 
         return Ok(pagedResult);
     }
-
+    /// <summary>
+    /// Obtém um autor específico pelo ID
+    /// </summary>
+    /// <param name="id">ID do autor</param>
+    /// <returns>O autor encontrado</returns>
+    /// <response code="200">Retorna o autor encontrado</response>
+    /// <response code="404">Se o autor não for encontrado</response>
     [HttpGet("{id}")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<ActionResult<Entities.Author>> GetAuthor(int id)
     {
         var author = await _context.Authors
@@ -41,7 +63,16 @@ public class AuthorController : ControllerBase
         return author;
     }
 
+    /// <summary>
+    /// Cria um novo autor
+    /// </summary>
+    /// <param name="author">Dados do autor a ser criado</param>
+    /// <returns>O novo autor criado</returns>
+    /// <response code="201">Retorna o novo autor criado</response>
+    /// <response code="400">Se os dados do autor forem inválidos</response>
     [HttpPost]
+    [ProducesResponseType(StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<Entities.Author>> CreateAuthor(Entities.Author author)
     {
         _context.Authors.Add(author);
@@ -50,7 +81,19 @@ public class AuthorController : ControllerBase
         return CreatedAtAction(nameof(GetAuthor), new { id = author.Id }, author);
     }
 
+    /// <summary>
+    /// Atualiza um autor existente
+    /// </summary>
+    /// <param name="id">ID do autor a ser atualizado</param>
+    /// <param name="author">Novos dados do autor</param>
+    /// <returns>Nenhum conteúdo</returns>
+    /// <response code="204">Se o autor foi atualizado com sucesso</response>
+    /// <response code="400">Se os dados do autor forem inválidos</response>
+    /// <response code="404">Se o autor não for encontrado</response>
     [HttpPatch("{id}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> UpdateAuthor(int id, Entities.Author author)
     {
         if (id != author.Id)
@@ -79,7 +122,16 @@ public class AuthorController : ControllerBase
         return NoContent();
     }
 
+    /// <summary>
+    /// Remove um autor existente
+    /// </summary>
+    /// <param name="id">ID do autor a ser removido</param>
+    /// <returns>Nenhum conteúdo</returns>
+    /// <response code="204">Se o autor foi removido com sucesso</response>
+    /// <response code="404">Se o autor não for encontrado</response>
     [HttpDelete("{id}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> DeleteAuthor(int id)
     {
         var author = await _context.Authors.FindAsync(id);

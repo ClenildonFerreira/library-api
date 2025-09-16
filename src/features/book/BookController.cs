@@ -2,6 +2,8 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using LibraryApi.Infrastructure;
 using LibraryApi.Infrastructure.Pagination;
+using Microsoft.AspNetCore.Http;
+using System.Net.Mime;
 
 namespace LibraryApi.Features.Book;
 
@@ -67,7 +69,16 @@ public class BookController : ControllerBase
         return book;
     }
 
+    /// <summary>
+    /// Cria um novo livro
+    /// </summary>
+    /// <param name="book">Dados do livro a ser criado</param>
+    /// <returns>O novo livro criado</returns>
+    /// <response code="201">Retorna o novo livro criado</response>
+    /// <response code="400">Se os dados do livro forem inválidos ou se o autor ou gênero não existirem</response>
     [HttpPost]
+    [ProducesResponseType(StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<ActionResult<Entities.Book>> CreateBook(Entities.Book book)
     {
         var authorExists = await _context.Authors.AnyAsync(a => a.Id == book.AuthorId);
@@ -88,7 +99,19 @@ public class BookController : ControllerBase
         return CreatedAtAction(nameof(GetBook), new { id = book.Id }, book);
     }
 
+    /// <summary>
+    /// Atualiza um livro existente
+    /// </summary>
+    /// <param name="id">ID do livro a ser atualizado</param>
+    /// <param name="book">Novos dados do livro</param>
+    /// <returns>Nenhum conteúdo</returns>
+    /// <response code="204">Se o livro foi atualizado com sucesso</response>
+    /// <response code="400">Se os dados do livro forem inválidos ou se o autor ou gênero não existirem</response>
+    /// <response code="404">Se o livro não for encontrado</response>
     [HttpPatch("{id}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> UpdateBook(int id, Entities.Book book)
     {
         if (id != book.Id)
@@ -129,7 +152,18 @@ public class BookController : ControllerBase
         return NoContent();
     }
 
+    /// <summary>
+    /// Remove um livro existente
+    /// </summary>
+    /// <param name="id">ID do livro a ser removido</param>
+    /// <returns>Nenhum conteúdo</returns>
+    /// <response code="204">Se o livro foi removido com sucesso</response>
+    /// <response code="400">Se o livro possuir empréstimos associados</response>
+    /// <response code="404">Se o livro não for encontrado</response>
     [HttpDelete("{id}")]
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> DeleteBook(int id)
     {
         var book = await _context.Books.FindAsync(id);
@@ -150,7 +184,17 @@ public class BookController : ControllerBase
         return NoContent();
     }
 
+    /// <summary>
+    /// Pesquisa livros por título, autor ou gênero
+    /// </summary>
+    /// <param name="title">Título ou parte do título para pesquisa</param>
+    /// <param name="author">Nome ou parte do nome do autor para pesquisa</param>
+    /// <param name="genre">Nome ou parte do nome do gênero para pesquisa</param>
+    /// <param name="parameters">Parâmetros de paginação</param>
+    /// <returns>Uma lista paginada de livros que correspondem aos critérios de pesquisa</returns>
+    /// <response code="200">Retorna a lista paginada de livros encontrados</response>
     [HttpGet("search")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<ActionResult<PagedResult<Entities.Book>>> SearchBooks(
         [FromQuery] string? title,
         [FromQuery] string? author,
