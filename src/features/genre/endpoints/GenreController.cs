@@ -2,10 +2,10 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using LibraryApi.Infrastructure;
 using LibraryApi.Infrastructure.Pagination;
-using Microsoft.AspNetCore.Http;
-using System.Net.Mime;
+using LibraryApi.Features.Genre.models;
+using LibraryApi.Features.Genre.views;
 
-namespace LibraryApi.Features.Genre;
+namespace LibraryApi.Features.Genre.endpoints;
 
 /// <summary>
 /// Controller para gerenciamento de gêneros literários
@@ -31,29 +31,38 @@ public class GenreController : ControllerBase
     /// <response code="200">Retorna a lista paginada de gêneros</response>
     [HttpGet]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public async Task<ActionResult<PagedResult<Entities.Genre>>> GetGenres([FromQuery] PaginationParameters parameters)
+    public async Task<ActionResult<GenreListViewModel>> GetGenres([FromQuery] PaginationParameters parameters)
     {
-        var query = _context.Genres.AsQueryable();
+        var query = _context.Genres
+            .Include(g => g.Books)
+            .AsQueryable();
 
-        var pagedResult = await Task.FromResult(query.ToPagedResult(parameters.PageNumber, parameters.PageSize));
+        var genres = await Task.FromResult(query.ToPagedResult(parameters.PageNumber, parameters.PageSize));
 
-        return Ok(pagedResult);
+        var genreDtos = genres.Items.Select(g => new GenreDto
+        {
+            Id = g.Id,
+            Name = g.Name,
+            Description = g.Description,
+            BookCount = g.Books?.Count ?? 0
+        }).ToList();
+
+        var pagedResult = new PagedResult<GenreDto>(genreDtos, genres.TotalCount, genres.PageNumber, genres.PageSize);
+
+        return Ok(new GenreListViewModel { Genres = pagedResult });
     }
 
     /// <summary>
     /// Obtém um gênero específico pelo ID
     /// </summary>
-    /// <param name="id">ID do gênero</param>
-    /// <returns>O gênero encontrado</returns>
-    /// <response code="200">Retorna o gênero encontrado</response>
-    /// <response code="404">Se o gênero não for encontrado</response>
     [HttpGet("{id}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<Entities.Genre>> GetGenre(int id)
+    public async Task<ActionResult<GenreDetailViewModel>> GetGenre(int id)
     {
         var genre = await _context.Genres
-            .Include(g => g.Books)
+            .Include(g => g.Books!)
+            .ThenInclude(b => b.Author)
             .FirstOrDefaultAsync(g => g.Id == id);
 
         if (genre == null)
@@ -61,46 +70,76 @@ public class GenreController : ControllerBase
             return NotFound();
         }
 
-        return genre;
+        var genreDto = new GenreDto
+        {
+            Id = genre.Id,
+            Name = genre.Name,
+            Description = genre.Description,
+            BookCount = genre.Books?.Count ?? 0
+        };
+
+        var bookDtos = genre.Books?.Select(b => new BookSummaryDto
+        {
+            Id = b.Id,
+            Title = b.Title,
+            ISBN = b.ISBN,
+            PublicationYear = b.PublicationYear,
+            AuthorName = b.Author?.Name
+        }).ToList() ?? new List<BookSummaryDto>();
+
+        return Ok(new GenreDetailViewModel
+        {
+            Genre = genreDto,
+            Books = bookDtos
+        });
     }
 
     /// <summary>
     /// Cria um novo gênero literário
     /// </summary>
-    /// <param name="genre">Dados do gênero a ser criado</param>
-    /// <returns>O novo gênero criado</returns>
-    /// <response code="201">Retorna o novo gênero criado</response>
-    /// <response code="400">Se os dados do gênero forem inválidos</response>
     [HttpPost]
     [ProducesResponseType(StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult<Entities.Genre>> CreateGenre(Entities.Genre genre)
+    public async Task<ActionResult<GenreDto>> CreateGenre(CreateGenreDto createGenreDto)
     {
+        var genre = new Entities.Genre
+        {
+            Name = createGenreDto.Name,
+            Description = createGenreDto.Description
+        };
+
         _context.Genres.Add(genre);
         await _context.SaveChangesAsync();
 
-        return CreatedAtAction(nameof(GetGenre), new { id = genre.Id }, genre);
+        var genreDto = new GenreDto
+        {
+            Id = genre.Id,
+            Name = genre.Name,
+            Description = genre.Description,
+            BookCount = 0
+        };
+
+        return CreatedAtAction(nameof(GetGenre), new { id = genre.Id }, genreDto);
     }
 
     /// <summary>
     /// Atualiza um gênero existente
     /// </summary>
-    /// <param name="id">ID do gênero a ser atualizado</param>
-    /// <param name="genre">Novos dados do gênero</param>
-    /// <returns>Nenhum conteúdo</returns>
-    /// <response code="204">Se o gênero foi atualizado com sucesso</response>
-    /// <response code="400">Se os dados do gênero forem inválidos</response>
-    /// <response code="404">Se o gênero não for encontrado</response>
     [HttpPatch("{id}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> UpdateGenre(int id, Entities.Genre genre)
+    public async Task<IActionResult> UpdateGenre(int id, UpdateGenreDto updateGenreDto)
     {
-        if (id != genre.Id)
+        var genre = await _context.Genres.FindAsync(id);
+
+        if (genre == null)
         {
-            return BadRequest();
+            return NotFound();
         }
+
+        genre.Name = updateGenreDto.Name;
+        genre.Description = updateGenreDto.Description;
 
         _context.Entry(genre).State = EntityState.Modified;
 
@@ -126,19 +165,24 @@ public class GenreController : ControllerBase
     /// <summary>
     /// Remove um gênero existente
     /// </summary>
-    /// <param name="id">ID do gênero a ser removido</param>
-    /// <returns>Nenhum conteúdo</returns>
-    /// <response code="204">Se o gênero foi removido com sucesso</response>
-    /// <response code="404">Se o gênero não for encontrado</response>
     [HttpDelete("{id}")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
     public async Task<IActionResult> DeleteGenre(int id)
     {
-        var genre = await _context.Genres.FindAsync(id);
+        var genre = await _context.Genres
+            .Include(g => g.Books)
+            .FirstOrDefaultAsync(g => g.Id == id);
+
         if (genre == null)
         {
             return NotFound();
+        }
+
+        if (genre.Books != null && genre.Books.Any())
+        {
+            return BadRequest("Não é possível excluir o gênero porque possui livros associados.");
         }
 
         _context.Genres.Remove(genre);
