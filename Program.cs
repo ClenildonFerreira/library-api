@@ -20,8 +20,23 @@ if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
+
+    using (var scope = app.Services.CreateScope())
+    {
+        var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        try
+        {
+            dbContext.Database.Migrate();
+            Console.WriteLine("Banco de dados deu bom!");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Erro ao migrar o banco de dados: {ex.Message}");
+        }
+    }
 }
 
+app.UseRouting();
 app.UseAuthorization();
 
 app.MapControllers();
