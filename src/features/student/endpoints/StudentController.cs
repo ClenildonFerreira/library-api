@@ -2,10 +2,12 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using LibraryApi.Infrastructure;
 using LibraryApi.Infrastructure.Pagination;
+using LibraryApi.Features.Student.models;
+using LibraryApi.Features.Student.views;
 using Microsoft.AspNetCore.Http;
 using System.Net.Mime;
 
-namespace LibraryApi.Features.Student;
+namespace LibraryApi.Features.Student.endpoints;
 
 /// <summary>
 /// Controller para gerenciamento de estudantes
@@ -31,13 +33,28 @@ public class StudentController : ControllerBase
     /// <response code="200">Retorna a lista paginada de estudantes</response>
     [HttpGet]
     [ProducesResponseType(StatusCodes.Status200OK)]
-    public async Task<ActionResult<PagedResult<Entities.Student>>> GetStudents([FromQuery] PaginationParameters parameters)
+    public async Task<ActionResult<StudentListViewModel>> GetStudents([FromQuery] PaginationParameters parameters)
     {
-        var query = _context.Students.AsQueryable();
+        var query = _context.Students
+            .Include(s => s.Loans)
+            .AsQueryable();
 
-        var pagedResult = await Task.FromResult(query.ToPagedResult(parameters.PageNumber, parameters.PageSize));
+        var students = await Task.FromResult(query.ToPagedResult(parameters.PageNumber, parameters.PageSize));
 
-        return Ok(pagedResult);
+        var studentDtos = students.Items.Select(s => new StudentDto
+        {
+            Id = s.Id,
+            Name = s.Name,
+            Email = s.Email,
+            RegistrationNumber = s.RegistrationNumber,
+            Phone = s.Phone,
+            ActiveLoansCount = s.Loans?.Count(l => l.ReturnDate == null) ?? 0,
+            TotalLoansCount = s.Loans?.Count ?? 0
+        }).ToList();
+
+        var pagedResult = new PagedResult<StudentDto>(studentDtos, students.TotalCount, students.PageNumber, students.PageSize);
+
+        return Ok(new StudentListViewModel { Students = pagedResult });
     }
 
     /// <summary>
@@ -50,7 +67,7 @@ public class StudentController : ControllerBase
     [HttpGet("{id}")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<ActionResult<Entities.Student>> GetStudent(int id)
+    public async Task<ActionResult<StudentDetailViewModel>> GetStudent(int id)
     {
         var student = await _context.Students
             .Include(s => s.Loans!)
@@ -62,32 +79,75 @@ public class StudentController : ControllerBase
             return NotFound();
         }
 
-        return student;
+        var studentDto = new StudentDto
+        {
+            Id = student.Id,
+            Name = student.Name,
+            Email = student.Email,
+            RegistrationNumber = student.RegistrationNumber,
+            Phone = student.Phone,
+            ActiveLoansCount = student.Loans?.Count(l => l.ReturnDate == null) ?? 0,
+            TotalLoansCount = student.Loans?.Count ?? 0
+        };
+
+        var loanDtos = student.Loans?.Select(l => new LoanSummaryDto
+        {
+            Id = l.Id,
+            LoanDate = l.LoanDate,
+            DueDate = l.DueDate,
+            ReturnDate = l.ReturnDate,
+            BookTitle = l.Book?.Title
+        }).ToList() ?? new List<LoanSummaryDto>();
+
+        return Ok(new StudentDetailViewModel
+        {
+            Student = studentDto,
+            Loans = loanDtos
+        });
     }
 
     /// <summary>
     /// Cria um novo estudante
     /// </summary>
-    /// <param name="student">Dados do estudante a ser criado</param>
+    /// <param name="createStudentDto">Dados do estudante a ser criado</param>
     /// <returns>O novo estudante criado</returns>
     /// <response code="201">Retorna o novo estudante criado</response>
     /// <response code="400">Se os dados do estudante forem inválidos</response>
     [HttpPost]
     [ProducesResponseType(StatusCodes.Status201Created)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    public async Task<ActionResult<Entities.Student>> CreateStudent(Entities.Student student)
+    public async Task<ActionResult<StudentDto>> CreateStudent(CreateStudentDto createStudentDto)
     {
+        var student = new Entities.Student
+        {
+            Name = createStudentDto.Name ?? "",
+            Email = createStudentDto.Email ?? "",
+            RegistrationNumber = createStudentDto.RegistrationNumber ?? "",
+            Phone = createStudentDto.Phone ?? ""
+        };
+
         _context.Students.Add(student);
         await _context.SaveChangesAsync();
 
-        return CreatedAtAction(nameof(GetStudent), new { id = student.Id }, student);
+        var studentDto = new StudentDto
+        {
+            Id = student.Id,
+            Name = student.Name,
+            Email = student.Email,
+            RegistrationNumber = student.RegistrationNumber,
+            Phone = student.Phone,
+            ActiveLoansCount = 0,
+            TotalLoansCount = 0
+        };
+
+        return CreatedAtAction(nameof(GetStudent), new { id = student.Id }, studentDto);
     }
 
     /// <summary>
     /// Atualiza um estudante existente
     /// </summary>
     /// <param name="id">ID do estudante a ser atualizado</param>
-    /// <param name="student">Novos dados do estudante</param>
+    /// <param name="updateStudentDto">Novos dados do estudante</param>
     /// <returns>Nenhum conteúdo</returns>
     /// <response code="204">Se o estudante foi atualizado com sucesso</response>
     /// <response code="400">Se os dados do estudante forem inválidos</response>
@@ -96,12 +156,19 @@ public class StudentController : ControllerBase
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status404NotFound)]
-    public async Task<IActionResult> UpdateStudent(int id, Entities.Student student)
+    public async Task<IActionResult> UpdateStudent(int id, UpdateStudentDto updateStudentDto)
     {
-        if (id != student.Id)
+        var student = await _context.Students.FindAsync(id);
+
+        if (student == null)
         {
-            return BadRequest();
+            return NotFound();
         }
+
+        student.Name = updateStudentDto.Name ?? student.Name;
+        student.Email = updateStudentDto.Email ?? student.Email;
+        student.RegistrationNumber = updateStudentDto.RegistrationNumber ?? student.RegistrationNumber;
+        student.Phone = updateStudentDto.Phone ?? student.Phone;
 
         _context.Entry(student).State = EntityState.Modified;
 
@@ -138,14 +205,16 @@ public class StudentController : ControllerBase
     [ProducesResponseType(StatusCodes.Status404NotFound)]
     public async Task<IActionResult> DeleteStudent(int id)
     {
-        var student = await _context.Students.FindAsync(id);
+        var student = await _context.Students
+            .Include(s => s.Loans)
+            .FirstOrDefaultAsync(s => s.Id == id);
+
         if (student == null)
         {
             return NotFound();
         }
 
-        var hasLoans = await _context.Loans.AnyAsync(l => l.StudentId == id);
-        if (hasLoans)
+        if (student.Loans != null && student.Loans.Any(l => l.ReturnDate == null))
         {
             return BadRequest("Não é possível excluir o estudante porque existem empréstimos pendentes.");
         }
@@ -159,5 +228,59 @@ public class StudentController : ControllerBase
     private bool StudentExists(int id)
     {
         return _context.Students.Any(e => e.Id == id);
+    }
+
+    /// <summary>
+    /// Pesquisa estudantes por nome, email ou número de matrícula
+    /// </summary>
+    /// <param name="name">Nome ou parte do nome para pesquisa</param>
+    /// <param name="email">Email ou parte do email para pesquisa</param>
+    /// <param name="registrationNumber">Número de matrícula ou parte dele para pesquisa</param>
+    /// <param name="parameters">Parâmetros de paginação</param>
+    /// <returns>Uma lista paginada de estudantes que correspondem aos critérios de pesquisa</returns>
+    /// <response code="200">Retorna a lista paginada de estudantes encontrados</response>
+    [HttpGet("search")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<ActionResult<StudentListViewModel>> SearchStudents(
+        [FromQuery] string? name,
+        [FromQuery] string? email,
+        [FromQuery] string? registrationNumber,
+        [FromQuery] PaginationParameters parameters)
+    {
+        var query = _context.Students
+            .Include(s => s.Loans)
+            .AsQueryable();
+
+        if (!string.IsNullOrEmpty(name))
+        {
+            query = query.Where(s => s.Name != null && s.Name.Contains(name));
+        }
+
+        if (!string.IsNullOrEmpty(email))
+        {
+            query = query.Where(s => s.Email != null && s.Email.Contains(email));
+        }
+
+        if (!string.IsNullOrEmpty(registrationNumber))
+        {
+            query = query.Where(s => s.RegistrationNumber != null && s.RegistrationNumber.Contains(registrationNumber));
+        }
+
+        var students = await Task.FromResult(query.ToPagedResult(parameters.PageNumber, parameters.PageSize));
+
+        var studentDtos = students.Items.Select(s => new StudentDto
+        {
+            Id = s.Id,
+            Name = s.Name,
+            Email = s.Email,
+            RegistrationNumber = s.RegistrationNumber,
+            Phone = s.Phone,
+            ActiveLoansCount = s.Loans?.Count(l => l.ReturnDate == null) ?? 0,
+            TotalLoansCount = s.Loans?.Count ?? 0
+        }).ToList();
+
+        var pagedResult = new PagedResult<StudentDto>(studentDtos, students.TotalCount, students.PageNumber, students.PageSize);
+
+        return Ok(new StudentListViewModel { Students = pagedResult });
     }
 }
